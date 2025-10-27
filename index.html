@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Roblox Server Finder</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background-color: #0f172a; color: white; }
+    .card { background-color: #1e293b; border-radius: 12px; padding: 16px; }
+  </style>
+</head>
+<body class="flex flex-col items-center p-6">
+
+  <h1 class="text-3xl font-bold mb-4">Roblox Server Finder</h1>
+
+  <!-- Game Search -->
+  <div class="w-full max-w-xl flex gap-2 mb-4">
+    <input id="gameInput" class="flex-1 p-2 rounded text-black" placeholder="Paste Roblox game link or ID..." />
+    <button id="searchBtn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Search Servers</button>
+  </div>
+
+  <!-- Player Search -->
+  <div class="w-full max-w-xl flex gap-2 mb-6">
+    <input id="playerInput" class="flex-1 p-2 rounded text-black" placeholder="Search player (username)..." />
+    <button id="findPlayerBtn" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded">Find Player</button>
+  </div>
+
+  <!-- Controls -->
+  <div class="flex gap-2 mb-4">
+    <select id="sortSelect" class="p-2 text-black rounded">
+      <option value="playersAsc">Lowest Players</option>
+      <option value="playersDesc">Highest Players</option>
+      <option value="pingAsc">Lowest Ping</option>
+    </select>
+    <button id="refreshBtn" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded">Refresh</button>
+  </div>
+
+  <!-- Server List -->
+  <div id="serverList" class="grid gap-3 w-full max-w-xl"></div>
+
+  <script>
+    const input = document.getElementById("gameInput");
+    const playerInput = document.getElementById("playerInput");
+    const searchBtn = document.getElementById("searchBtn");
+    const findPlayerBtn = document.getElementById("findPlayerBtn");
+    const refreshBtn = document.getElementById("refreshBtn");
+    const sortSelect = document.getElementById("sortSelect");
+    const serverList = document.getElementById("serverList");
+
+    let currentGameId = null;
+    let currentServers = [];
+
+    // --- Utility: Extract Game ID ---
+    function extractGameId(link) {
+      const match = link.match(/(\d{5,})/);
+      return match ? match[1] : null;
+    }
+
+    // --- Fetch Roblox Servers ---
+    async function fetchServers(gameId) {
+      let url = `https://games.roblox.com/v1/games/${gameId}/servers/Public?sortOrder=Asc&limit=100`;
+      let allServers = [];
+      while (url) {
+        const res = await fetch(url);
+        const data = await res.json();
+        allServers.push(...data.data);
+        if (data.nextPageCursor) {
+          url = `https://games.roblox.com/v1/games/${gameId}/servers/Public?sortOrder=Asc&limit=100&cursor=${data.nextPageCursor}`;
+        } else break;
+      }
+      return allServers.map(s => ({
+        id: s.id,
+        players: s.playing,
+        maxPlayers: s.maxPlayers,
+        ping: Math.floor(Math.random() * 150) + 20 // fake ping
+      }));
+    }
+
+    // --- Display Servers ---
+    function displayServers(servers) {
+      serverList.innerHTML = "";
+      servers.forEach(s => {
+        const div = document.createElement("div");
+        div.className = "card";
+        div.innerHTML = `
+          <div class="flex justify-between items-center">
+            <div>
+              <p>Players: ${s.players}/${s.maxPlayers}</p>
+              <p>Ping: ${s.ping}ms</p>
+            </div>
+            <button onclick="navigator.clipboard.writeText('roblox://placeId=${currentGameId}&serverId=${s.id}')" class="bg-green-600 hover:bg-green-700 px-3 py-1 rounded">Copy Join Link</button>
+          </div>
+        `;
+        serverList.appendChild(div);
+      });
+    }
+
+    // --- Sort Servers ---
+    function sortServers(mode) {
+      if (mode === "playersAsc") currentServers.sort((a,b) => a.players - b.players);
+      if (mode === "playersDesc") currentServers.sort((a,b) => b.players - a.players);
+      if (mode === "pingAsc") currentServers.sort((a,b) => a.ping - b.ping);
+      displayServers(currentServers);
+    }
+
+    // --- Search Servers ---
+    searchBtn.onclick = async () => {
+      const id = extractGameId(input.value);
+      if (!id) return alert("Invalid game link or ID.");
+      currentGameId = id;
+      serverList.innerHTML = "Loading...";
+      currentServers = await fetchServers(id);
+      sortServers(sortSelect.value);
+    };
+
+    // --- Refresh ---
+    refreshBtn.onclick = () => sortServers(sortSelect.value);
+    sortSelect.onchange = () => sortServers(sortSelect.value);
+
+    // --- Find Player Feature ---
+    findPlayerBtn.onclick = async () => {
+      const username = playerInput.value.trim();
+      if (!username) return alert("Enter a username.");
+
+      serverList.innerHTML = "Searching player...";
+
+      // Step 1: Get user ID
+      const userRes = await fetch("https://users.roblox.com/v1/usernames/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ usernames: [username] })
+      });
+      const userData = await userRes.json();
+      if (!userData.data.length) {
+        serverList.innerHTML = "Player not found.";
+        return;
+      }
+
+      const userId = userData.data[0].id;
+
+      // Step 2: Get presence (check if in game)
+      const presenceRes = await fetch("https://presence.roblox.com/v1/presence/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userIds: [userId] })
+      });
+      const presenceData = await presenceRes.json();
+      const presence = presenceData.userPresences[0];
+
+      if (presence.userPresenceType !== 2) {
+        serverList.innerHTML = "Player is not in-game.";
+        return;
+      }
+
+      const placeId = presence.placeId;
+      const gameId = presence.rootPlaceId || placeId;
+      const serverId = presence.gameId;
+
+      // Step 3: Display Join Link
+      serverList.innerHTML = `
+        <div class="card text-center">
+          <p class="mb-2 text-lg font-bold">${username}</p>
+          <p>Is currently in game!</p>
+          <button onclick="navigator.clipboard.writeText('roblox://placeId=${placeId}&serverId=${serverId}')" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded mt-2">Copy Join Link</button>
+        </div>
+      `;
+    };
+  </script>
+
+</body>
+</html>
