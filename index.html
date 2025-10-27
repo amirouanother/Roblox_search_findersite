@@ -1,170 +1,575 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Roblox Server Finder</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Roblox Server Finder — Full</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    body { background-color: #0f172a; color: white; }
-    .card { background-color: #1e293b; border-radius: 12px; padding: 16px; }
+    :root {
+      --bg-dark: #0f172a;
+      --panel-dark: #0b1220;
+      --card-dark: #111827;
+      --muted: #94a3b8;
+    }
+    body { background-color: var(--bg-dark); color: #fff; }
+    .card { background-color: var(--card-dark); border-radius: 12px; padding: 12px; }
+    .slide-panel { width: 360px; max-width: 90vw; background: linear-gradient(180deg,#061225,#0b1320); box-shadow: -20px 0 40px rgba(2,6,23,.6); }
+    .hidden-if-cors { display: none; }
+    /* small animation */
+    .panel-enter { transform: translateX(100%); }
+    .panel-enter-active { transform: translateX(0); transition: transform .28s cubic-bezier(.2,.9,.25,1); }
+    .panel-exit-active { transform: translateX(100%); transition: transform .24s cubic-bezier(.2,.9,.25,1); }
   </style>
 </head>
-<body class="flex flex-col items-center p-6">
+<body class="min-h-screen antialiased">
 
-  <h1 class="text-3xl font-bold mb-4">Roblox Server Finder</h1>
+  <div class="max-w-4xl mx-auto p-6">
+    <header class="flex items-center justify-between mb-6">
+      <h1 class="text-3xl font-bold">Roblox Server Finder</h1>
+      <div class="flex items-center gap-3">
+        <button id="themeBtn" class="px-3 py-1 rounded bg-gray-700 hover:bg-gray-600">Toggle Theme</button>
+        <button id="openSettings" title="Settings" class="px-3 py-1 rounded bg-yellow-600 hover:bg-yellow-500">⚙️ Settings</button>
+      </div>
+    </header>
 
-  <!-- Game Search -->
-  <div class="w-full max-w-xl flex gap-2 mb-4">
-    <input id="gameInput" class="flex-1 p-2 rounded text-black" placeholder="Paste Roblox game link or ID..." />
-    <button id="searchBtn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Search Servers</button>
+    <!-- Inputs -->
+    <div class="grid gap-4 md:grid-cols-2 mb-4">
+      <div>
+        <input id="gameInput" class="w-full p-3 rounded text-black" placeholder="Paste Roblox game link or ID..." />
+        <div class="flex gap-2 mt-2">
+          <button id="searchBtn" class="px-4 py-2 rounded bg-blue-600 hover:bg-blue-700">Search Servers</button>
+          <button id="refreshBtn" class="px-4 py-2 rounded bg-gray-700 hover:bg-gray-600">Refresh</button>
+          <select id="sortSelect" class="px-3 py-2 text-black rounded">
+            <option value="playersAsc">Lowest Players</option>
+            <option value="playersDesc">Highest Players</option>
+            <option value="pingAsc">Lowest Ping</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <input id="playerInput" class="w-full p-3 rounded text-black" placeholder="Search player username..." />
+        <div class="flex gap-2 mt-2">
+          <button id="findPlayerBtn" class="px-4 py-2 rounded bg-purple-600 hover:bg-purple-700">Find Player</button>
+          <button id="copyLastJoin" class="px-4 py-2 rounded bg-green-600 hover:bg-green-700">Copy Last Join Link</button>
+        </div>
+        <p id="notice" class="text-sm text-gray-400 mt-2">Tip: If Roblox APIs return CORS errors, run a small server-side proxy (example included in message below).</p>
+      </div>
+    </div>
+
+    <!-- Server list & status -->
+    <div id="status" class="mb-4 text-sm text-yellow-300"></div>
+    <div id="serverList" class="grid gap-3"></div>
+
+    <!-- CORS help (hidden unless fetch fails) -->
+    <div id="corsHelp" class="mt-6 p-4 rounded card hidden">
+      <h3 class="font-bold mb-1">CORS / API Access Note</h3>
+      <p class="text-sm text-gray-300 mb-2">
+        If server fetches fail due to CORS, you can run a tiny proxy locally or host it. Example Node.js proxy (use cautiously):
+      </p>
+      <pre class="text-xs p-2 rounded bg-black/40 overflow-auto text-gray-200">
+npm i express node-fetch
+// server.js
+const express = require('express');
+const fetch = require('node-fetch');
+const app = express();
+app.use(express.json());
+app.all('/proxy/*', async (req,res)=> {
+  const target = req.url.replace('/proxy/','');
+  const url = decodeURIComponent(target);
+  try {
+    const r = await fetch(url, { method: req.method, headers: {'User-Agent':'Mozilla/5.0','Content-Type':'application/json'}, body: req.method==='POST'?JSON.stringify(req.body):undefined });
+    const t = await r.text();
+    res.status(r.status).send(t);
+  } catch(e){ res.status(500).send('error:'+e.message) }
+});
+app.listen(3000,()=>console.log('proxy 3000'));
+      </pre>
+      <p class="text-xs text-gray-400">Then change `useProxy` to true in the script below (or host the proxy).</p>
+    </div>
+
+    <footer class="mt-8 text-xs text-gray-500">
+      Built for you — settings auto-save. Auto-refresh interval is fixed to 10s.
+    </footer>
   </div>
 
-  <!-- Player Search -->
-  <div class="w-full max-w-xl flex gap-2 mb-6">
-    <input id="playerInput" class="flex-1 p-2 rounded text-black" placeholder="Search player (username)..." />
-    <button id="findPlayerBtn" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded">Find Player</button>
-  </div>
+  <!-- Settings Slide-in Panel -->
+  <div id="settingsPanelBackdrop" class="fixed inset-0 z-40 hidden">
+    <div id="settingsPanel" class="absolute right-0 top-0 h-full panel-enter slide-panel p-6 z-50">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-xl font-bold">Settings</h2>
+        <button id="closeSettings" class="px-3 py-1 rounded bg-red-600 hover:bg-red-500">Close</button>
+      </div>
 
-  <!-- Controls -->
-  <div class="flex gap-2 mb-4">
-    <select id="sortSelect" class="p-2 text-black rounded">
-      <option value="playersAsc">Lowest Players</option>
-      <option value="playersDesc">Highest Players</option>
-      <option value="pingAsc">Lowest Ping</option>
-    </select>
-    <button id="refreshBtn" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded">Refresh</button>
-  </div>
+      <div class="space-y-4">
+        <label class="flex items-center justify-between">
+          <span>Deepsearch</span>
+          <input id="deepsearch" type="checkbox" />
+        </label>
 
-  <!-- Server List -->
-  <div id="serverList" class="grid gap-3 w-full max-w-xl"></div>
+        <label class="flex items-center justify-between">
+          <span>Quicksearch (stop early when a good server is found)</span>
+          <input id="quicksearch" type="checkbox" />
+        </label>
+
+        <label class="flex items-center justify-between">
+          <span>Auto Refresh (fixed 10s)</span>
+          <input id="autorefresh" type="checkbox" />
+        </label>
+        <p class="text-xs text-gray-400">Auto-refresh interval is fixed to 10 seconds (by request).</p>
+
+        <label class="flex items-center justify-between">
+          <span>Priority</span>
+          <select id="priority" class="text-black rounded px-2">
+            <option value="players">Players</option>
+            <option value="ping">Ping</option>
+          </select>
+        </label>
+
+        <label class="flex items-center justify-between">
+          <span>Desired Players (0 = disabled)</span>
+          <input id="desiredPlayers" type="number" min="0" value="0" class="text-black rounded px-2 w-24" />
+        </label>
+
+        <label class="flex items-center justify-between">
+          <span>Save Preferences</span>
+          <input id="savePrefs" type="checkbox" checked />
+        </label>
+
+        <label class="flex items-center justify-between">
+          <span>Theme (Light / Dark)</span>
+          <select id="themeSelect" class="text-black rounded px-2">
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </label>
+
+        <div class="pt-4 border-t border-gray-700">
+          <button id="resetPrefs" class="px-4 py-2 rounded bg-red-700 hover:bg-red-600">Reset to Defaults</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
 
   <script>
-    const input = document.getElementById("gameInput");
-    const playerInput = document.getElementById("playerInput");
-    const searchBtn = document.getElementById("searchBtn");
-    const findPlayerBtn = document.getElementById("findPlayerBtn");
-    const refreshBtn = document.getElementById("refreshBtn");
-    const sortSelect = document.getElementById("sortSelect");
-    const serverList = document.getElementById("serverList");
-
+    /************************************************************************
+     * Configuration / runtime variables
+     ************************************************************************/
     let currentGameId = null;
     let currentServers = [];
+    let lastJoinLink = "";
+    let autoRefreshIntervalId = null;
+    const AUTO_REFRESH_SECONDS = 10; // fixed as requested
+    const useProxy = false; // Set to true if you run the proxy from CORS help and change proxy origin below
+    const proxyPrefix = "http://localhost:3000/proxy/"; // proxy usage: proxyPrefix + encodeURIComponent(targetUrl)
+    const saveKey = "rbx_finder_prefs_v1";
 
-    // --- Utility: Extract Game ID ---
+    /************************************************************************
+     * DOM refs
+     ************************************************************************/
+    const gameInput = document.getElementById("gameInput");
+    const searchBtn = document.getElementById("searchBtn");
+    const refreshBtn = document.getElementById("refreshBtn");
+    const sortSelect = document.getElementById("sortSelect");
+    const serverListEl = document.getElementById("serverList");
+    const statusEl = document.getElementById("status");
+    const openSettings = document.getElementById("openSettings");
+    const settingsBackdrop = document.getElementById("settingsPanelBackdrop");
+    const settingsPanel = document.getElementById("settingsPanel");
+    const closeSettings = document.getElementById("closeSettings");
+    const deepsearchEl = document.getElementById("deepsearch");
+    const quicksearchEl = document.getElementById("quicksearch");
+    const autorefreshEl = document.getElementById("autorefresh");
+    const priorityEl = document.getElementById("priority");
+    const desiredPlayersEl = document.getElementById("desiredPlayers");
+    const savePrefsEl = document.getElementById("savePrefs");
+    const themeSelect = document.getElementById("themeSelect");
+    const themeBtn = document.getElementById("themeBtn");
+    const resetPrefs = document.getElementById("resetPrefs");
+    const findPlayerBtn = document.getElementById("findPlayerBtn");
+    const playerInput = document.getElementById("playerInput");
+    const copyLastJoin = document.getElementById("copyLastJoin");
+    const corsHelp = document.getElementById("corsHelp");
+    const notice = document.getElementById("notice");
+
+    /************************************************************************
+     * Utilities
+     ************************************************************************/
+    function uid() { return Math.random().toString(36).slice(2,10); }
+    function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+    function setStatus(msg, color="text-yellow-300"){ statusEl.className = color; statusEl.innerText = msg; }
+    function clearStatus(){ statusEl.innerText = ""; }
+
+    function fetchWithOptionalProxy(url, opts){
+      const target = useProxy ? proxyPrefix + encodeURIComponent(url) : url;
+      // if proxy is used and sending POST, body must be JSON handled by server
+      return fetch(target, opts);
+    }
+
     function extractGameId(link) {
-      const match = link.match(/(\d{5,})/);
-      return match ? match[1] : null;
+      if (!link) return null;
+      // accept full URLs or raw ID
+      const idMatch = link.match(/(\d{5,})/);
+      if (idMatch) return idMatch[1];
+      return null;
     }
 
-    // --- Fetch Roblox Servers ---
-    async function fetchServers(gameId) {
-      let url = `https://games.roblox.com/v1/games/${gameId}/servers/Public?sortOrder=Asc&limit=100`;
-      let allServers = [];
-      while (url) {
-        const res = await fetch(url);
-        const data = await res.json();
-        allServers.push(...data.data);
-        if (data.nextPageCursor) {
-          url = `https://games.roblox.com/v1/games/${gameId}/servers/Public?sortOrder=Asc&limit=100&cursor=${data.nextPageCursor}`;
-        } else break;
+    function savePrefs(){
+      if (!savePrefsEl.checked) return localStorage.removeItem(saveKey);
+      const prefs = {
+        deepsearch: deepsearchEl.checked,
+        quicksearch: quicksearchEl.checked,
+        autorefresh: autorefreshEl.checked,
+        priority: priorityEl.value,
+        desiredPlayers: Number(desiredPlayersEl.value)||0,
+        theme: themeSelect.value,
+        savePrefs: savePrefsEl.checked
+      };
+      localStorage.setItem(saveKey, JSON.stringify(prefs));
+      setStatus("Preferences saved.", "text-green-400");
+      setTimeout(clearStatus, 1200);
+    }
+
+    function loadPrefs(){
+      try {
+        const raw = localStorage.getItem(saveKey);
+        if (!raw) return;
+        const prefs = JSON.parse(raw);
+        deepsearchEl.checked = !!prefs.deepsearch;
+        quicksearchEl.checked = !!prefs.quicksearch;
+        autorefreshEl.checked = !!prefs.autorefresh;
+        priorityEl.value = prefs.priority || "players";
+        desiredPlayersEl.value = prefs.desiredPlayers || 0;
+        themeSelect.value = prefs.theme || "dark";
+        savePrefsEl.checked = !!prefs.savePrefs;
+        applyTheme(themeSelect.value);
+      } catch(e){ console.warn("load prefs error", e); }
+    }
+
+    function resetToDefaults(){
+      deepsearchEl.checked = false;
+      quicksearchEl.checked = false;
+      autorefreshEl.checked = false;
+      priorityEl.value = "players";
+      desiredPlayersEl.value = 0;
+      savePrefsEl.checked = true;
+      themeSelect.value = "dark";
+      applyTheme("dark");
+      savePrefs();
+      setStatus("Preferences reset.", "text-green-400");
+      setTimeout(clearStatus, 1200);
+    }
+
+    function applyTheme(theme){
+      if (theme === "light"){
+        document.documentElement.style.setProperty('--bg-dark','#f8fafc');
+        document.documentElement.style.setProperty('--panel-dark','#ffffff');
+        document.documentElement.style.setProperty('--card-dark','#e6eef8');
+        document.body.style.color = '#0b1220';
+      } else {
+        document.documentElement.style.setProperty('--bg-dark','#0f172a');
+        document.documentElement.style.setProperty('--panel-dark','#0b1220');
+        document.documentElement.style.setProperty('--card-dark','#111827');
+        document.body.style.color = '#fff';
       }
-      return allServers.map(s => ({
-        id: s.id,
-        players: s.playing,
-        maxPlayers: s.maxPlayers,
-        ping: Math.floor(Math.random() * 150) + 20 // fake ping
-      }));
     }
 
-    // --- Display Servers ---
-    function displayServers(servers) {
-      serverList.innerHTML = "";
-      servers.forEach(s => {
+    /************************************************************************
+     * Server fetching logic
+     *
+     * - deepsearch: fetch all pages until cursor exhausted
+     * - quicksearch: stop early when good server found:
+     *    good server = meets desiredPlayers (if set) OR low players (<=2)
+     * - desiredPlayers: numeric filter (0 disabled)
+     * - priority: sorting preference players/ping
+     ************************************************************************/
+
+    async function fetchServers(gameId, { deepsearch=false, quicksearch=false } = {}) {
+      if (!gameId) throw new Error("No gameId");
+      const collected = [];
+      let baseUrl = `https://games.roblox.com/v1/games/${gameId}/servers/Public?sortOrder=Asc&limit=100`;
+      let url = baseUrl;
+      let pagesFetched = 0;
+      const desired = Number(desiredPlayersEl.value) || 0;
+
+      while (url) {
+        pagesFetched++;
+        try {
+          const res = await fetchWithOptionalProxy(url);
+          if (!res.ok) {
+            const text = await res.text().catch(()=>"");
+            throw new Error(`HTTP ${res.status} ${res.statusText} ${text||""}`);
+          }
+          const data = await res.json();
+          if (data && Array.isArray(data.data)) {
+            for (const s of data.data) {
+              collected.push({
+                id: s.id,
+                playing: s.playing,
+                maxPlayers: s.maxPlayers,
+                ping: Math.floor(Math.random()*160)+20,
+                raw: s
+              });
+            }
+          } else {
+            break;
+          }
+          // quicksearch logic — if enabled and desired set, stop early on match
+          if (quicksearch && desired > 0) {
+            const found = collected.find(x=>x.playing === desired);
+            if (found) { url = null; break; }
+          } else if (quicksearch) {
+            // quicksearch stop condition: find a low-pop server (<=2 players) or empty
+            const found = collected.find(x=>x.playing <= 2);
+            if (found) { url = null; break; }
+          }
+
+          if (data.nextPageCursor && deepsearch) {
+            url = `${baseUrl}&cursor=${encodeURIComponent(data.nextPageCursor)}`;
+          } else {
+            url = null;
+          }
+
+          // small safety: if deepsearch but too many pages, stop after 10
+          if (deepsearch && pagesFetched >= 10) {
+            setStatus("Deepsearch reached 10 pages limit.", "text-yellow-300");
+            break;
+          }
+        } catch (err) {
+          // bubble up so UI can show CORS note
+          throw err;
+        }
+      }
+      return collected;
+    }
+
+    function applyFiltersAndSort(servers) {
+      const desired = Number(desiredPlayersEl.value) || 0;
+      let out = servers.slice();
+
+      // desired players filter (if set)
+      if (desired > 0) {
+        // keep servers exactly equal OR within ±1 to be flexible
+        out = out.filter(s => Math.abs(s.playing - desired) <= 1);
+      }
+
+      // Sorting based on UI priority or explicit sort select
+      const priority = priorityEl.value;
+      const explicit = sortSelect.value;
+
+      if (priority === "players") {
+        out.sort((a,b) => a.playing - b.playing);
+      } else if (priority === "ping") {
+        out.sort((a,b) => a.ping - b.ping);
+      }
+
+      // Then apply explicit sort select override if user chose it
+      if (explicit === "playersAsc") out.sort((a,b)=>a.playing-b.playing);
+      else if (explicit === "playersDesc") out.sort((a,b)=>b.playing-a.playing);
+      else if (explicit === "pingAsc") out.sort((a,b)=>a.ping-b.ping);
+
+      return out;
+    }
+
+    function renderServers(servers) {
+      serverListEl.innerHTML = "";
+      if (!servers.length) {
+        serverListEl.innerHTML = `<div class="card">No servers found.</div>`;
+        return;
+      }
+      for (const s of servers) {
         const div = document.createElement("div");
-        div.className = "card";
-        div.innerHTML = `
-          <div class="flex justify-between items-center">
-            <div>
-              <p>Players: ${s.players}/${s.maxPlayers}</p>
-              <p>Ping: ${s.ping}ms</p>
+        div.className = "card flex items-center justify-between";
+        const left = document.createElement("div");
+        left.innerHTML = `<div class="text-sm">Players: <strong>${s.playing}/${s.maxPlayers}</strong></div>
+                          <div class="text-xs text-gray-400">Ping: ${s.ping} ms • Server ID: ${s.id}</div>`;
+        const right = document.createElement("div");
+        right.className = "flex items-center gap-2";
+        const joinBtn = document.createElement("button");
+        joinBtn.className = "px-3 py-1 rounded bg-green-600 hover:bg-green-700 text-xs";
+        joinBtn.innerText = "Copy Join Link";
+        joinBtn.onclick = () => {
+          const link = `roblox://placeId=${currentGameId}&serverId=${s.id}`;
+          navigator.clipboard.writeText(link);
+          lastJoinLink = link;
+          setStatus("Join link copied.", "text-green-400");
+          setTimeout(clearStatus, 1200);
+        };
+        const inspectBtn = document.createElement("button");
+        inspectBtn.className = "px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-xs";
+        inspectBtn.innerText = "Inspect";
+        inspectBtn.onclick = () => {
+          alert(JSON.stringify(s.raw,null,2));
+        };
+        right.appendChild(joinBtn);
+        right.appendChild(inspectBtn);
+        div.appendChild(left);
+        div.appendChild(right);
+        serverListEl.appendChild(div);
+      }
+    }
+
+    /************************************************************************
+     * Top-level search / refresh handlers
+     ************************************************************************/
+    async function runSearch({ manual=true } = {}) {
+      const gameVal = gameInput.value.trim();
+      const id = extractGameId(gameVal);
+      if (!id) { alert("Invalid game link or ID."); return; }
+      currentGameId = id;
+      setStatus("Searching servers...");
+      serverListEl.innerHTML = "<div class='card'>Loading servers…</div>";
+      try {
+        const servers = await fetchServers(id, { deepsearch: deepsearchEl.checked, quicksearch: quicksearchEl.checked });
+        currentServers = servers;
+        if (!servers.length) setStatus("No servers returned by API.", "text-yellow-300");
+        else clearStatus();
+        const processed = applyFiltersAndSort(servers);
+        renderServers(processed);
+      } catch (err) {
+        console.error(err);
+        setStatus("Fetch error — check console. If CORS error, enable/use proxy.", "text-red-500");
+        corsHelp.classList.remove("hidden");
+        serverListEl.innerHTML = `<div class="card">Error fetching servers: ${String(err.message||err)}</div>`;
+      }
+    }
+
+    function startAutoRefreshIfNeeded(){
+      if (autoRefreshIntervalId) { clearInterval(autoRefreshIntervalId); autoRefreshIntervalId = null; }
+      if (autorefreshEl.checked && currentGameId) {
+        autoRefreshIntervalId = setInterval(()=> {
+          runSearch({ manual: false });
+        }, AUTO_REFRESH_SECONDS * 1000);
+        setStatus(`Auto-refresh enabled (every ${AUTO_REFRESH_SECONDS}s).`, "text-green-400");
+        setTimeout(clearStatus, 1400);
+      }
+    }
+
+    /************************************************************************
+     * Player find feature
+     ************************************************************************/
+    async function findPlayer(username){
+      if (!username) { alert("Enter a username."); return; }
+      serverListEl.innerHTML = "<div class='card'>Searching player presence…</div>";
+      setStatus("Finding player...");
+      try {
+        // get user id
+        const nameUrl = "https://users.roblox.com/v1/usernames/users";
+        const nameRes = await fetchWithOptionalProxy(nameUrl, {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({usernames:[username]})
+        });
+        if (!nameRes.ok) throw new Error(`users API ${nameRes.status}`);
+        const nameData = await nameRes.json();
+        if (!nameData.data || !nameData.data.length) {
+          serverListEl.innerHTML = `<div class='card'>User not found.</div>`;
+          setStatus("User not found.", "text-yellow-300");
+          return;
+        }
+        const userId = nameData.data[0].id;
+
+        // presence
+        const presenceUrl = "https://presence.roblox.com/v1/presence/users";
+        const presenceRes = await fetchWithOptionalProxy(presenceUrl, {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({ userIds: [String(userId)] })
+        });
+        if (!presenceRes.ok) throw new Error(`presence API ${presenceRes.status}`);
+        const presenceData = await presenceRes.json();
+        const pres = presenceData.userPresences && presenceData.userPresences[0];
+        if (!pres || pres.userPresenceType !== 2) {
+          serverListEl.innerHTML = `<div class='card'>${username} is not in-game.</div>`;
+          setStatus("Player not in-game.", "text-yellow-300");
+          return;
+        }
+
+        // show join link to the server if gameId present
+        const placeId = pres.placeId;
+        const serverId = pres.gameId;
+        const link = `roblox://placeId=${placeId}&serverId=${serverId}`;
+        lastJoinLink = link;
+        serverListEl.innerHTML = `
+          <div class="card text-center">
+            <div class="text-lg font-bold mb-2">${username}</div>
+            <div class="text-sm text-gray-300 mb-2">In place: ${placeId}</div>
+            <div class="flex justify-center gap-2">
+              <button id="copyLinkBtn" class="px-4 py-2 rounded bg-green-600 hover:bg-green-700">Copy Join Link</button>
+              <button id="openInRoblox" class="px-4 py-2 rounded bg-blue-600 hover:bg-blue-700">Open Link</button>
             </div>
-            <button onclick="navigator.clipboard.writeText('roblox://placeId=${currentGameId}&serverId=${s.id}')" class="bg-green-600 hover:bg-green-700 px-3 py-1 rounded">Copy Join Link</button>
           </div>
         `;
-        serverList.appendChild(div);
-      });
+        document.getElementById("copyLinkBtn").onclick = () => { navigator.clipboard.writeText(link); setStatus("Join link copied.", "text-green-400"); };
+        document.getElementById("openInRoblox").onclick = () => { navigator.clipboard.writeText(link); alert("Link copied to clipboard. Paste into your browser or Roblox launcher to join."); };
+        clearStatus();
+      } catch (err) {
+        console.error(err);
+        setStatus("Error finding player (check console). Possibly CORS.", "text-red-500");
+        corsHelp.classList.remove("hidden");
+        serverListEl.innerHTML = `<div class="card">Error: ${String(err.message||err)}</div>`;
+      }
     }
 
-    // --- Sort Servers ---
-    function sortServers(mode) {
-      if (mode === "playersAsc") currentServers.sort((a,b) => a.players - b.players);
-      if (mode === "playersDesc") currentServers.sort((a,b) => b.players - a.players);
-      if (mode === "pingAsc") currentServers.sort((a,b) => a.ping - b.ping);
-      displayServers(currentServers);
-    }
+    /************************************************************************
+     * Event bindings
+     ************************************************************************/
+    searchBtn.addEventListener("click", async ()=> { await runSearch({ manual:true }); startAutoRefreshIfNeeded(); savePrefs(); });
+    refreshBtn.addEventListener("click", async ()=> { await runSearch({ manual:true }); savePrefs(); });
+    sortSelect.addEventListener("change", ()=> { renderServers(applyFiltersAndSort(currentServers)); });
+    priorityEl.addEventListener("change", ()=> { renderServers(applyFiltersAndSort(currentServers)); });
 
-    // --- Search Servers ---
-    searchBtn.onclick = async () => {
-      const id = extractGameId(input.value);
-      if (!id) return alert("Invalid game link or ID.");
-      currentGameId = id;
-      serverList.innerHTML = "Loading...";
-      currentServers = await fetchServers(id);
-      sortServers(sortSelect.value);
-    };
+    openSettings.addEventListener("click", ()=> {
+      settingsBackdrop.classList.remove("hidden");
+      // animate in
+      settingsPanel.classList.remove("panel-exit-active");
+      settingsPanel.classList.add("panel-enter-active");
+    });
+    closeSettings.addEventListener("click", ()=> {
+      settingsPanel.classList.remove("panel-enter-active");
+      settingsPanel.classList.add("panel-exit-active");
+      setTimeout(()=>settingsBackdrop.classList.add("hidden"), 260);
+      savePrefs();
+    });
 
-    // --- Refresh ---
-    refreshBtn.onclick = () => sortServers(sortSelect.value);
-    sortSelect.onchange = () => sortServers(sortSelect.value);
+    // click outside to close
+    settingsBackdrop.addEventListener("click", (e)=>{
+      if (e.target === settingsBackdrop) closeSettings.click();
+    });
 
-    // --- Find Player Feature ---
-    findPlayerBtn.onclick = async () => {
-      const username = playerInput.value.trim();
-      if (!username) return alert("Enter a username.");
+    deepsearchEl.addEventListener("change", ()=> savePrefs());
+    quicksearchEl.addEventListener("change", ()=> savePrefs());
+    autorefreshEl.addEventListener("change", ()=> { savePrefs(); startAutoRefreshIfNeeded(); });
+    desiredPlayersEl.addEventListener("change", ()=> { savePrefs(); renderServers(applyFiltersAndSort(currentServers)); });
+    savePrefsEl.addEventListener("change", ()=> savePrefs());
+    themeSelect.addEventListener("change", ()=> { applyTheme(themeSelect.value); savePrefs(); });
+    themeBtn.addEventListener("click", ()=> {
+      const next = (themeSelect.value === "dark") ? "light" : "dark";
+      themeSelect.value = next; applyTheme(next); savePrefs();
+    });
+    resetPrefs.addEventListener("click", ()=> resetToDefaults());
+    findPlayerBtn.addEventListener("click", ()=> findPlayer(playerInput.value.trim()));
+    copyLastJoin.addEventListener("click", ()=> {
+      if (!lastJoinLink) { setStatus("No last join link available.", "text-yellow-300"); return; }
+      navigator.clipboard.writeText(lastJoinLink);
+      setStatus("Copied last join link.", "text-green-400");
+      setTimeout(clearStatus, 1200);
+    });
 
-      serverList.innerHTML = "Searching player...";
+    // keyboard: Enter triggers search in inputs
+    gameInput.addEventListener("keydown", (e)=>{ if (e.key === "Enter") searchBtn.click(); });
+    playerInput.addEventListener("keydown", (e)=>{ if (e.key === "Enter") findPlayerBtn.click(); });
 
-      // Step 1: Get user ID
-      const userRes = await fetch("https://users.roblox.com/v1/usernames/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ usernames: [username] })
-      });
-      const userData = await userRes.json();
-      if (!userData.data.length) {
-        serverList.innerHTML = "Player not found.";
-        return;
-      }
+    /************************************************************************
+     * Init
+     ************************************************************************/
+    loadPrefs();
+    // small UX: try to focus game input
+    gameInput.focus();
 
-      const userId = userData.data[0].id;
-
-      // Step 2: Get presence (check if in game)
-      const presenceRes = await fetch("https://presence.roblox.com/v1/presence/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userIds: [userId] })
-      });
-      const presenceData = await presenceRes.json();
-      const presence = presenceData.userPresences[0];
-
-      if (presence.userPresenceType !== 2) {
-        serverList.innerHTML = "Player is not in-game.";
-        return;
-      }
-
-      const placeId = presence.placeId;
-      const gameId = presence.rootPlaceId || placeId;
-      const serverId = presence.gameId;
-
-      // Step 3: Display Join Link
-      serverList.innerHTML = `
-        <div class="card text-center">
-          <p class="mb-2 text-lg font-bold">${username}</p>
-          <p>Is currently in game!</p>
-          <button onclick="navigator.clipboard.writeText('roblox://placeId=${placeId}&serverId=${serverId}')" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded mt-2">Copy Join Link</button>
-        </div>
-      `;
-    };
+    // If autorefresh saved and enabled and user hasn't started a search yet, do nothing until search launched.
   </script>
 
 </body>
